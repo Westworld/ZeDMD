@@ -24,7 +24,7 @@
 
 #define SERIAL_BAUD    921600  // Serial baud rate.
 #ifdef ZEDMD_icn2053
-#define SERIAL_TIMEOUT 24       // Time in milliseconds to wait for the next data chunk.
+#define SERIAL_TIMEOUT 8       // Time in milliseconds to wait for the next data chunk.
 #else
 #define SERIAL_TIMEOUT 8       // Time in milliseconds to wait for the next data chunk.
 #endif
@@ -135,7 +135,7 @@
 #include <Bounce2.h>
 
 // test
- #define UDPDEBUG 1
+#define UDPDEBUG 1
 #ifdef UDPDEBUG
 #include "WiFi.h"
 #include <WiFiUdp.h>
@@ -144,7 +144,6 @@ const char * udpAddress = "192.168.0.95";
 const int udpPort = 19814;
 WiFiClient wifiClient;
 const char* wifihostname = "ZeDMD";
-void UDPDebug(String msg);
 #endif
 
 Bounce2::Button* rgbOrderButton;
@@ -174,6 +173,10 @@ bool lumtxt[16*5]={0,1,0,0,0,1,0,0,1,0,1,1,0,1,1,0,
 unsigned char lumval[16]={0,2,4,7,11,18,30,40,50,65,80,100,125,160,200,255}; // Non-linear brightness progression
 
 #ifdef ZEDMD_icn2053
+void UDPDebug(String msg);
+ unsigned long icn2053_lastrefresh=0;
+ char icn2053_lastrefreshcounter=0;
+
   MatrixPanel_DMA *dma_display = nullptr;
 
   hub75_cfg_t mxconfig = {
@@ -262,7 +265,26 @@ bool fastReadySent = false;
 void FlashBuffer() {
   // only required for double buffer icn2053, needs around 7ms
 #ifdef ZEDMD_icn2053
-  dma_display->flipDMABuffer();
+  unsigned long curmillis = millis();
+  long dist = curmillis-icn2053_lastrefresh;
+  if (dist>75) {  // long enough ago, let's draw
+       dma_display->flipDMABuffer();
+       UDPDebug("flash");
+       icn2053_lastrefreshcounter=0;
+  }
+  else {
+    if (++icn2053_lastrefreshcounter > 2) {
+      // skip drawing to avoid timeout and hang on the Windows DMD dll
+      icn2053_lastrefreshcounter=0;  // draw next frame...
+      UDPDebug("skip frame");
+    }
+    else {
+      dma_display->flipDMABuffer();
+      UDPDebug("flash");
+    }
+  }
+ icn2053_lastrefresh = curmillis;
+
 #endif
 }
 
@@ -297,6 +319,7 @@ void sendFastReady() {
   // Indicate (R)eady, even if the frame isn't rendered yet.
   // That would allow to get the buffer filled with the next frame already.
   Serial.write('R');
+  UDPDebug("sendFastReady");
   fastReadySent = true;
 }
 
@@ -383,8 +406,8 @@ void DisplayText(bool* text, int width, int x, int y, int R, int G, int B)
 
 void Say(unsigned char where, unsigned int what)
 {
-    DisplayNombre(where,3,0,where*5,255,255,255);
-    if (what!=(unsigned int)-1) DisplayNombre(what,10,15,where*5,255,255,255);
+    //DisplayNombre(where,3,0,where*5,255,255,255);
+    //if (what!=(unsigned int)-1) DisplayNombre(what,10,15,where*5,255,255,255);
 
   #ifdef UDPDEBUG
     UDPDebug("say: "+String(where)+" - "+String(what));
@@ -950,12 +973,16 @@ void setup()
   LoadLum();
 
   #ifdef UDPDEBUG 
-    if (lumstep < 8) lumstep = 8;
+    if (lumstep < 12)  {
+      lumstep = 15;
+      acordreRGB = 1;
+    }
   #endif
 
   dma_display->setBrightness8(lumval[lumstep]); // range is 0-255, 0 - 0%, 255 - 100%
   #ifdef UDPDEBUG
     UDPDebug("Start");
+    Serial.println("start");
   #endif
   DisplayLogo();
 }
@@ -1099,12 +1126,21 @@ bool wait_for_ctrl_chars(void)
   {
     if (Serial.available())
     {
+#ifdef UDPDEBUG
+  unsigned char recchar = Serial.read();
+  if (recchar != CtrlCharacters[nCtrlCharFound++]) {
+    nCtrlCharFound = 0;
+    UDPDebug("ctrl char error: "+String(recchar));
+  }
+#else
       if (Serial.read() != CtrlCharacters[nCtrlCharFound++]) nCtrlCharFound = 0;
+#endif      
     }
 
     if (displayStatus == 1 && mode64 && nCtrlCharFound == 0)
     {
       // While waiting for the next frame, perform in-frame color rotations.
+      UDPDebug("updateColorRotation");
       updateColorRotations();
     }
     else if (displayStatus == 3 && (millis() - nextTime[0]) > LOGO_TIMEOUT)
@@ -1119,6 +1155,7 @@ bool wait_for_ctrl_chars(void)
       {
         Say(5, ++debugLines[5]);
       }
+UDPDebug("Error control chars, watchdog");
 
       // Send an (E)rror signal.
       Serial.write('E');
@@ -1129,7 +1166,7 @@ bool wait_for_ctrl_chars(void)
       nCtrlCharFound = 0;
     }
   }
-
+UDPDebug("control chars found");
   return true;
 }
 
@@ -1780,16 +1817,20 @@ void loop()
 
 
 
-#ifdef UDPDEBUG
+
 void UDPDebug(String message) {
+#ifdef UDPDEBUG
   udp.beginPacket(udpAddress, udpPort);
   udp.write((const uint8_t* ) message.c_str(), (size_t) message.length());
   udp.endPacket();
+#endif  
 }
 
 void UDPDebug(const char * message) {
+  #ifdef UDPDEBUG
   udp.beginPacket(udpAddress, udpPort);
   udp.write((const uint8_t*) message, strlen(message));
   udp.endPacket();
+  #endif  
   }
-#endif  
+
