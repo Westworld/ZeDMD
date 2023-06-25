@@ -744,6 +744,13 @@ void ScaleImage(uint8_t colors)
 
 void DrawPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b)
 {
+
+#ifdef ZEDMD_icn2053
+dma_display->drawPixelRGB888(x, y, r, g, b);
+ // dma_display->drawPixelFast(x, y, r, g, b);
+#else  //original ZEDMD
+
+
 #ifdef ZEDMD_128_64_2
   uint8_t colors = ((r >> 5) << 5) + ((g >> 5) << 2) + (b >> 6);
   uint8_t colorsExist = (r ? 8 : 0) + (g ? 4 : 0) + (b ? 2 : 0) + ((r || g || b) ? 1 : 0);
@@ -765,6 +772,8 @@ void DrawPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b)
 
     dma_display->drawPixelRGB888(x, y, r, g, b);
   }
+
+ #endif 
 }
 
 void fillPanelRaw()
@@ -987,10 +996,18 @@ void setup()
   ClearScreen();
   LoadLum();
 
+
+
+  for (int i=0;i<64;i++) {
+    dma_display->drawPixelFast(i, i, 255, 0, 0);
+  }
+  dma_display->flipDMABuffer();
+  delay(5000);
+
   #ifdef UDPDEBUG 
     if (lumstep < 12)  {
       lumstep = 15;
-      acordreRGB = 2;
+      acordreRGB = 0;
     }
   #endif
 
