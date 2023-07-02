@@ -997,12 +997,13 @@ void setup()
   LoadLum();
 
 
-
+/*
   for (int i=0;i<64;i++) {
     dma_display->drawPixelFast(i, i, 255, 0, 0);
   }
   dma_display->flipDMABuffer();
   delay(5000);
+  */
 
   #ifdef UDPDEBUG 
     if (lumstep < 12)  {
