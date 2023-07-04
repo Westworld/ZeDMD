@@ -2,32 +2,19 @@
 #define ZEDMD_VERSION_MINOR 2  // Max 2 Digits
 #define ZEDMD_VERSION_PATCH 4  // Max 2 Digits
 
-#ifdef ZEDMD_icn2053
-  #define MATRIX_WIDTH 128
-  #define MATRIX_HEIGHT 64
-  #define PANELS_NUMBER 2
-  #define PANEL_COUNT_WIDTH 1
-  #define PANEL_COUNT_HEIGHT 1 
-  // PANEL_WIDTH declared inside icn2053 library
-#else
-  #ifdef ZEDMD_128_64_2
-      #define PANEL_WIDTH    128 // Width: number of LEDs for 1 panel.
-      #define PANEL_HEIGHT   64  // Height: number of LEDs.
-      #define PANELS_NUMBER  2   // Number of horizontally chained panels.
-  #endif
-  #ifndef PANEL_WIDTH
-      #define PANEL_WIDTH    64  // Width: number of LEDs for 1 panel.
-      #define PANEL_HEIGHT   32  // Height: number of LEDs.
-      #define PANELS_NUMBER  2   // Number of horizontally chained panels.
-  #endif
+#ifdef ZEDMD_128_64_2
+    #define PANEL_WIDTH    128 // Width: number of LEDs for 1 panel.
+    #define PANEL_HEIGHT   64  // Height: number of LEDs.
+    #define PANELS_NUMBER  2   // Number of horizontally chained panels.
+#endif
+#ifndef PANEL_WIDTH
+    #define PANEL_WIDTH    64  // Width: number of LEDs for 1 panel.
+    #define PANEL_HEIGHT   32  // Height: number of LEDs.
+    #define PANELS_NUMBER  2   // Number of horizontally chained panels.
 #endif
 
 #define SERIAL_BAUD    921600  // Serial baud rate.
-#ifdef ZEDMD_icn2053
 #define SERIAL_TIMEOUT 8       // Time in milliseconds to wait for the next data chunk.
-#else
-#define SERIAL_TIMEOUT 8       // Time in milliseconds to wait for the next data chunk.
-#endif
 #define SERIAL_BUFFER  8192    // Serial buffer size in byte.
 #define FRAME_TIMEOUT  2000   // Time in milliseconds to wait for a new frame.
 #define LOGO_TIMEOUT   20000   // Time in milliseconds before the logo vanishes.
@@ -86,25 +73,6 @@
 
 
 // Pinout derived from ESP32-HUB75-MatrixPanel-I2S-DMA.h
-#ifdef ZEDMD_icn2053
-  #define R1_PIN  32
-  #define G1_PIN  23
-  #define B1_PIN  33
-  #define R2_PIN  25
-  #define G2_PIN  19
-  #define B2_PIN  26
-  #define A_PIN   27
-  #define B_PIN   18
-  #define C_PIN   14
-  #define D_PIN   17
-  #define E_PIN   15 
-  #define LAT_PIN 16
-  #define OE_PIN  13
-  #define CLK_PIN 12
-
-  #define ORDRE_BUTTON_PIN 21
-  #define LUMINOSITE_BUTTON_PIN 22
-#else
   #define R1_PIN  25
   #define G1_PIN  26
   #define B1_PIN  27
@@ -122,11 +90,11 @@
 
   #define ORDRE_BUTTON_PIN 21
   #define LUMINOSITE_BUTTON_PIN 33
-#endif
 
 #include <Arduino.h>
-#ifdef ZEDMD_icn2053
-  #include "ESP32-HUB75-MatrixPanel-DMA.h"
+#ifdef ZEDMD_udb_sender
+  void DrawPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b);
+  // nothing
 #else
   #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #endif
@@ -134,17 +102,17 @@
 #include "miniz/miniz.h"
 #include <Bounce2.h>
 
+
 // test
-#define UDPDEBUG 1
-#ifdef UDPDEBUG
+#ifdef ZEDMD_udb_sender
 #include "WiFi.h"
+#include <HTTPClient.h>
 #include <WiFiUdp.h>
 WiFiUDP udp;
 const char * udpAddress = "192.168.0.95";
 const int udpPort = 19814;
 WiFiClient wifiClient;
 const char* wifihostname = "ZeDMD";
-void UDPDebug(String msg);
 #endif
 
 Bounce2::Button* rgbOrderButton;
@@ -153,12 +121,7 @@ Bounce2::Button* brightnessButton;
 #define N_CTRL_CHARS 6
 #define N_INTERMEDIATE_CTR_CHARS 4
 
-
-  #ifdef UDPDEBUG
-bool debugMode = true;
-  #else
 bool debugMode = false;
-  #endif
 unsigned int debugLines[6] = {0};
 
 // !!!!! NE METTRE AUCUNE VALEURE IDENTIQUE !!!!!
@@ -173,54 +136,17 @@ bool lumtxt[16*5]={0,1,0,0,0,1,0,0,1,0,1,1,0,1,1,0,
 
 unsigned char lumval[16]={0,2,4,7,11,18,30,40,50,65,80,100,125,160,200,255}; // Non-linear brightness progression
 
-#ifdef ZEDMD_icn2053
+#ifndef ZEDMD_udb_sender
+HUB75_I2S_CFG::i2s_pins _pins={R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
+HUB75_I2S_CFG mxconfig(
+          PANEL_WIDTH,    // width
+          PANEL_HEIGHT,   // height
+          PANELS_NUMBER,  // chain length
+          _pins           // pin mapping
+          //HUB75_I2S_CFG::FM6126A  // driver chip
+);
 
- unsigned long icn2053_lastrefresh=0;
- char icn2053_lastrefreshcounter=0;
-
-  MatrixPanel_DMA *dma_display = nullptr;
-
-  hub75_cfg_t mxconfig = {
-    .mx_width = PANEL_WIDTH,
-    .mx_height = PANEL_HEIGHT,
-    .mx_count_width = PANEL_COUNT_WIDTH,
-    .mx_count_height = PANEL_COUNT_HEIGHT,
-    .gpio = {
-    .r1 = R1_PIN,
-    .g1 = G1_PIN,
-    .b1 = B1_PIN,
-    .r2 = R2_PIN,
-    .g2 = G2_PIN,
-    .b2 = B2_PIN,
-    .a = A_PIN,
-    .b = B_PIN,
-    .c = C_PIN,
-    .d = D_PIN,
-    .e = E_PIN,
-    .lat = LAT_PIN,
-    .oe = OE_PIN,
-    .clk = CLK_PIN,
-    },
-    .driver = ICN2053,
-    .clk_freq = HZ_13M, 
-    .clk_phase = CLK_POZITIVE,
-    .color_depth = COLORx16,//PIXEL_COLOR_DEPTH
-    .double_buff = DOUBLE_BUFF_ON,
-    .double_dma_buff = DOUBLE_BUFF_ON,
-    .decoder_INT595 = true,
-  };
-
-#else
-  HUB75_I2S_CFG::i2s_pins _pins={R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
-  HUB75_I2S_CFG mxconfig(
-            PANEL_WIDTH,    // width
-            PANEL_HEIGHT,   // height
-            PANELS_NUMBER,  // chain length
-            _pins           // pin mapping
-            //HUB75_I2S_CFG::FM6126A  // driver chip
-  );
-
-  MatrixPanel_I2S_DMA *dma_display;
+MatrixPanel_I2S_DMA *dma_display;
 #endif
 
 int ordreRGB[3*6]={0,1,2, 2,0,1, 1,2,0,
@@ -265,37 +191,20 @@ bool fastReadySent = false;
 
 void FlashBuffer() {
   // only required for double buffer icn2053, needs around 7ms
-#ifdef ZEDMD_icn2053
- bool flag = dma_display->flipDMABufferIfReady();
- if (flag)  UDPDebug("skip frame");
- /*
-  unsigned long curmillis = millis();
-  long dist = curmillis-icn2053_lastrefresh;
-  if (dist>300) {  // long enough ago, let's draw
-      dma_display->flipDMABuffer();
-       UDPDebug("flash");
-   )     icn2053_lastrefresh = curmillis;
-  }
-  else {
-    
-    if (++icn2053_lastrefreshcounter > 1) {
-      // skip drawing to avoid timeout and hang on the Windows DMD dll
-      icn2053_lastrefreshcounter=0;  // draw next frame...
-      UDPDebug("skip frame");
-    }
-    else {
-      dma_dispy->flipDMABuffer();
-      UDPDebug("flash");
-       icn2053_lastrefresh = curmillis;
-    }
- 
-  }
-   */
+#ifdef ZEDMD_udb_sender
+// hier zum udp server senden
+//oder besser als HTTP request, wegen UDP max grenze?
+ HTTPClient http;
+    http.begin("http://192.168.0.91/4DAction/NewData/");
+    http.addHeader("Content-Type", "application/binary");  
+
+    http.POST((uint8_t *)doubleBuffer, TOTAL_HEIGHT*TOTAL_WIDTH*3);
+    http.end();
 
 #endif
 }
 
-#ifdef UDPDEBUG
+#ifdef ZEDMD_udb_sender
 void WifiConnect() {
   
     WiFi.setHostname(wifihostname);  
@@ -314,10 +223,7 @@ void WifiConnect() {
         delay(500);
         //Serial.print(F("."));
     }
-    IPAddress ip = WiFi.localIP();
-    //Serial.println(F("WiFi connected"));
-    //Serial.println(ip);
-    UDPDebug("connected");
+    IPAddress ip = WiFi.localIP();;
     
 }
 #endif
@@ -326,7 +232,6 @@ void sendFastReady() {
   // Indicate (R)eady, even if the frame isn't rendered yet.
   // That would allow to get the buffer filled with the next frame already.
   Serial.write('R');
-  UDPDebug("sendFastReady");
   fastReadySent = true;
 }
 
@@ -350,16 +255,28 @@ void DisplayChiffre(unsigned int chf, int x,int y,int R, int G, int B)
       if (tj<3)
       {
         if (min_chiffres[poscar + tj + ti*3*10] == 1) {
+          #ifndef ZEDMD_udb_sender
           dma_display->drawPixelRGB888(x+tj, y+ti, R, G, B);
+          #else
+          DrawPixel(x+tj, y+ti, R, G, B);
+          #endif
         }
         else
         {
+          #ifndef ZEDMD_udb_sender
           dma_display->drawPixelRGB888(x+tj, y+ti, 0, 0, 0);
-        }
+          #else
+          DrawPixel(x+tj, y+ti, 0, 0, 0);
+          #endif
+          }
       }
       else
       {
-        dma_display->drawPixelRGB888(x+tj, y+ti, 0, 0, 0);
+          #ifndef ZEDMD_udb_sender
+          dma_display->drawPixelRGB888(x+tj, y+ti, 0, 0, 0);
+          #else
+          DrawPixel(x+tj, y+ti, 0, 0, 0);
+          #endif
       }
     }
   }
@@ -386,10 +303,19 @@ void DisplayVersion()
   int ncM,ncm,ncp;
   if (ZEDMD_VERSION_MAJOR>=100) ncM=3; else if (ZEDMD_VERSION_MAJOR>=10) ncM=2; else ncM=1;
   DisplayNombre(ZEDMD_VERSION_MAJOR,ncM,4,TOTAL_HEIGHT-5,150,150,150);
+  #ifndef ZEDMD_udb_sender
   dma_display->drawPixelRGB888(4+4*ncM,TOTAL_HEIGHT-1,150,150,150);
+  #else
+  DrawPixel(4+4*ncM,TOTAL_HEIGHT-1,150,150,150);
+  #endif
+
   if (ZEDMD_VERSION_MINOR>=10) ncm=2; else ncm=1;
   DisplayNombre(ZEDMD_VERSION_MINOR,ncm,4+4*ncM+2,TOTAL_HEIGHT-5,150,150,150);
+  #ifndef ZEDMD_udb_sender
   dma_display->drawPixelRGB888(4+4*ncM+2+4*ncm,TOTAL_HEIGHT-1,150,150,150);
+  #else
+  DrawPixel(4+4*ncM+2+4*ncm,TOTAL_HEIGHT-1,150,150,150);
+  #endif
   if (ZEDMD_VERSION_PATCH>=10) ncp=2; else ncp=1;
   DisplayNombre(ZEDMD_VERSION_PATCH,ncp,4+4*ncM+2+4*ncm+2,TOTAL_HEIGHT-5,150,150,150);
 }
@@ -406,25 +332,36 @@ void DisplayText(bool* text, int width, int x, int y, int R, int G, int B)
   {
     for (unsigned int tj=0; tj<5;tj++)
     {
-      if (text[ti+tj*width]==1) dma_display->drawPixelRGB888(x+ti,y+tj,R,G,B); else dma_display->drawPixelRGB888(x+ti,y+tj,0,0,0);
+      if (text[ti+tj*width]==1) {
+        #ifndef ZEDMD_udb_sender
+        dma_display->drawPixelRGB888(x+ti,y+tj,R,G,B); 
+        #else
+        DrawPixel(x+ti,y+tj,R,G,B); 
+        #endif
+      }  
+      else {
+         #ifndef ZEDMD_udb_sender
+          dma_display->drawPixelRGB888(x+ti,y+tj,0,0,0);
+          #else
+          DrawPixel(x+ti,y+tj,R,G,B); 
+          #endif
+      }    
     }
   }
 }
 
 void Say(unsigned char where, unsigned int what)
 {
-    //DisplayNombre(where,3,0,where*5,255,255,255);
-    //if (what!=(unsigned int)-1) DisplayNombre(what,10,15,where*5,255,255,255);
+    DisplayNombre(where,3,0,where*5,255,255,255);
+    if (what!=(unsigned int)-1) DisplayNombre(what,10,15,where*5,255,255,255);
 
-  #ifdef UDPDEBUG
-  if (where == 0)
-    UDPDebug("say: "+String(where)+" - "+String(what));
-  #endif
 }
 
 void ClearScreen()
 {
+  #ifndef ZEDMD_udb_sender
   dma_display->clearScreen();
+  #endif
 
 #ifdef ZEDMD_128_64_2
   memset(doubleBuffer, 0, TOTAL_HEIGHT * TOTAL_WIDTH);
@@ -433,9 +370,6 @@ void ClearScreen()
   memset(doubleBuffer, 0, TOTAL_BYTES);
 #endif
 
-  #ifdef UDPDEBUG
-    UDPDebug("ClearScreen");
-  #endif
 }
 
 bool CmpColor(uint8_t* px1, uint8_t* px2, uint8_t colors)
@@ -745,12 +679,6 @@ void ScaleImage(uint8_t colors)
 void DrawPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b)
 {
 
-#ifdef ZEDMD_icn2053
-dma_display->drawPixelRGB888(x, y, r, g, b);
- // dma_display->drawPixelFast(x, y, r, g, b);
-#else  //original ZEDMD
-
-
 #ifdef ZEDMD_128_64_2
   uint8_t colors = ((r >> 5) << 5) + ((g >> 5) << 2) + (b >> 6);
   uint8_t colorsExist = (r ? 8 : 0) + (g ? 4 : 0) + (b ? 2 : 0) + ((r || g || b) ? 1 : 0);
@@ -770,10 +698,12 @@ dma_display->drawPixelRGB888(x, y, r, g, b);
     doubleBuffer[pos + 2] = b;
 #endif
 
+#ifndef ZEDMD_udb_sender
     dma_display->drawPixelRGB888(x, y, r, g, b);
+#endif    
   }
 
- #endif 
+
 }
 
 void fillPanelRaw()
@@ -783,9 +713,6 @@ void fillPanelRaw()
   for (int y = 0; y < TOTAL_HEIGHT; y++)
   {
     for (int x = 0; x < TOTAL_WIDTH; x++)
-    #ifdef ZEDMD_icn2053 
-    if (x<128)
-    #endif
     {
       pos = x * 3 + y * 3 * TOTAL_WIDTH;
 
@@ -853,7 +780,9 @@ void SaveLum()
 
 void DisplayLogo(void)
 {
+  #ifndef ZEDMD_udb_sender
   dma_display->setBrightness8(lumval[lumstep]);
+  #endif
 
   ClearScreen();
   LoadOrdreRGB();
@@ -896,9 +825,6 @@ void DisplayLogo(void)
   // Re-use this variable to save memory
   nextTime[0] = millis();
 
-    #ifdef UDPDEBUG
-    UDPDebug("DisplayLogo");
-  #endif
 }
 
 void DisplayUpdate(void)
@@ -936,28 +862,24 @@ void DisplayUpdate(void)
   // Re-use this variable to save memory
   nextTime[0] = millis() - (LOGO_TIMEOUT / 2);
 
-    #ifdef UDPDEBUG
-    UDPDebug("DisplayUpdate");
-  #endif
 }
 
 void ScreenSaver(void)
 {
   ClearScreen();
+  #ifndef ZEDMD_udb_sender
   dma_display->setBrightness8(lumval[1]);
+  #endif
   DisplayVersion();
   FlashBuffer();
 
   displayStatus = 0;
 
-    #ifdef UDPDEBUG
-    UDPDebug("Screensaver");
-  #endif
 }
 
 void setup()
 {
-  #ifdef UDPDEBUG 
+  #ifdef ZEDMD_udb_sender 
     WifiConnect();
   #endif
 
@@ -971,24 +893,18 @@ void setup()
   brightnessButton->interval(100);
   brightnessButton->setPressedState(LOW);
 
-#ifdef ZEDMD_icn2053
-  dma_display = new MatrixPanel_DMA(mxconfig);
-#else
+#ifndef ZEDMD_udb_sender
   mxconfig.clkphase = false; // change if you have some parts of the panel with a shift
-  dma_display = new MatrixPanel_I2S_DMA(mxconfig);
-#endif  
+  dma_display = new MatrixPanel_I2S_DMA(mxconfig); 
   dma_display->begin();
+#endif  
 
   if (!LittleFS.begin()) {
     Say(0, 9999);
     delay(4000);
   }
 
-#ifdef ZEDMD_icn2053
-  Serial.setRxBufferSize(SERIAL_BUFFER*2);
-  #else
-  Serial.setRxBufferSize(SERIAL_BUFFER);
-#endif  
+  Serial.setRxBufferSize(SERIAL_BUFFER); 
   Serial.setTimeout(SERIAL_TIMEOUT);
   Serial.begin(SERIAL_BAUD);
   while (!Serial);
@@ -996,27 +912,9 @@ void setup()
   ClearScreen();
   LoadLum();
 
-
-/*
-  for (int i=0;i<64;i++) {
-    dma_display->drawPixelFast(i, i, 255, 0, 0);
-  }
-  dma_display->flipDMABuffer();
-  delay(5000);
-  */
-
-  #ifdef UDPDEBUG 
-    if (lumstep < 12)  {
-      lumstep = 15;
-      acordreRGB = 0;
-    }
-  #endif
-
+#ifndef ZEDMD_udb_sender
   dma_display->setBrightness8(lumval[lumstep]); // range is 0-255, 0 - 0%, 255 - 100%
-  #ifdef UDPDEBUG
-    UDPDebug("Start");
-    Serial.println("start");
-  #endif
+#endif  
   DisplayLogo();
 }
 
@@ -1159,31 +1057,12 @@ bool wait_for_ctrl_chars(void)
   {
     if (Serial.available())
     {
-#ifdef UDPDEBUG
-  unsigned char recchar = Serial.read();
-  if (recchar != CtrlCharacters[nCtrlCharFound++]) {
-    nCtrlCharFound = 0;
-    UDPDebug("Error control chars, watchdog");
-    // clear serial buffer
-    while(Serial.available()) recchar=Serial.read();
-
-      // Send an (E)rror signal.
-      Serial.write('E');
-      // Send a (R)eady signal to tell the client to send the next command.
-      Serial.write('R');
-
-      ms = millis();
-      nCtrlCharFound = 0;
-  }
-#else
-      if (Serial.read() != CtrlCharacters[nCtrlCharFound++]) nCtrlCharFound = 0;
-#endif      
+      if (Serial.read() != CtrlCharacters[nCtrlCharFound++]) nCtrlCharFound = 0;     
     }
 
     if (displayStatus == 1 && mode64 && nCtrlCharFound == 0)
     {
       // While waiting for the next frame, perform in-frame color rotations.
-      UDPDebug("updateColorRotation");
       updateColorRotations();
     }
     else if (displayStatus == 3 && (millis() - nextTime[0]) > LOGO_TIMEOUT)
@@ -1198,7 +1077,6 @@ bool wait_for_ctrl_chars(void)
       {
         Say(5, ++debugLines[5]);
       }
-UDPDebug("Error control chars, watchdog");
 
       // Send an (E)rror signal.
       Serial.write('E');
@@ -1209,7 +1087,6 @@ UDPDebug("Error control chars, watchdog");
       nCtrlCharFound = 0;
     }
   }
-// UDPDebug("control chars found");
   return true;
 }
 
@@ -1217,7 +1094,7 @@ void loop()
 {
   while (MireActive)
   {
-    #ifdef UDPDEBUG   
+    #ifdef ZEDMD_udb_sender   
     if (WiFi.status() != WL_CONNECTED)
       WifiConnect();
     #endif  
@@ -1253,7 +1130,9 @@ void loop()
       nextTime[0] = millis();
       lumstep++;
       if (lumstep>=16) lumstep=1;
+      #ifndef ZEDMD_udb_sender
       dma_display->setBrightness8(lumval[lumstep]);
+      #endif
       DisplayLum();
       SaveLum();
       FlashBuffer();
@@ -1289,9 +1168,6 @@ void loop()
   if (handshakeSucceeded) {
     if (!fastReadySent) {
       Serial.write('R');
-        #ifdef UDPDEBUG
-            //UDPDebug("R Handshake");
-      #endif
     }
     else {
       fastReadySent = false;
@@ -1307,7 +1183,6 @@ void loop()
     unsigned long waittime=millis();
     while (Serial.available()==0) {
       if(millis()>(waittime+100)) {
-        UDPDebug("serial wait");
          waittime=millis();
       }
     };
@@ -1315,16 +1190,15 @@ void loop()
 
     if (debugMode) {
       DisplayNombre(c4, 2, TOTAL_WIDTH - 3*4, TOTAL_HEIGHT - 8, 200, 200, 200);
-        #ifdef UDPDEBUG
-   // UDPDebug("c4 Read: "+String(c4));
-  #endif
     }
 
     if (displayStatus == 0)
     {
       // Exit screen saver.
       ClearScreen();
+      #ifndef ZEDMD_udb_sender
       dma_display->setBrightness8(lumval[lumstep]);
+      #endif
       displayStatus = 1;
       FlashBuffer();
     }
@@ -1407,7 +1281,9 @@ void loop()
           if (tbuf[0] > 0 && tbuf[0] < 16)
           {
             lumstep = tbuf[0];
+            #ifndef ZEDMD_udb_sender
             dma_display->setBrightness8(lumval[lumstep]);
+            #endif
           }
           else
           {
@@ -1866,7 +1742,7 @@ void loop()
 
 
 
-
+/*
 void UDPDebug(String message) {
 #ifdef UDPDEBUG
   udp.beginPacket(udpAddress, udpPort);
@@ -1874,12 +1750,4 @@ void UDPDebug(String message) {
   udp.endPacket();
 #endif  
 }
-
-void UDPDebug(const char * message) {
-  #ifdef UDPDEBUG
-  udp.beginPacket(udpAddress, udpPort);
-  udp.write((const uint8_t*) message, strlen(message));
-  udp.endPacket();
-  #endif  
-  }
-
+*/
