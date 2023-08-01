@@ -7,6 +7,11 @@
     #define PANEL_HEIGHT   64  // Height: number of LEDs.
     #define PANELS_NUMBER  2   // Number of horizontally chained panels.
 #endif
+#ifdef ZEDMD_udb_sender  // we do not use 128_64_2, as we do need the full buffer size and handling
+    #define PANEL_WIDTH    128 // Width: number of LEDs for 1 panel.
+    #define PANEL_HEIGHT   64  // Height: number of LEDs.
+    #define PANELS_NUMBER  2   // Number of horizontally chained panels.
+#endif
 #ifndef PANEL_WIDTH
     #define PANEL_WIDTH    64  // Width: number of LEDs for 1 panel.
     #define PANEL_HEIGHT   32  // Height: number of LEDs.
@@ -113,6 +118,12 @@ const char * udpAddress = "192.168.0.95";
 const int udpPort = 19814;
 WiFiClient wifiClient;
 const char* wifihostname = "ZeDMD";
+
+void UDPDebug(String message) {
+  udp.beginPacket(udpAddress, udpPort);
+  udp.write((const uint8_t* ) message.c_str(), (size_t) message.length());
+  udp.endPacket(); 
+}
 #endif
 
 Bounce2::Button* rgbOrderButton;
@@ -194,12 +205,15 @@ void FlashBuffer() {
 #ifdef ZEDMD_udb_sender
 // hier zum udp server senden
 //oder besser als HTTP request, wegen UDP max grenze?
+/*
  HTTPClient http;
-    http.begin("http://192.168.0.91/4DAction/NewData/");
+    http.begin("http://192.168.0.126/4DAction/NewData/");
     http.addHeader("Content-Type", "application/binary");  
 
     http.POST((uint8_t *)doubleBuffer, TOTAL_HEIGHT*TOTAL_WIDTH*3);
     http.end();
+  */
+ UDPDebug("frame ready");  
 
 #endif
 }
@@ -210,6 +224,7 @@ void WifiConnect() {
     WiFi.setHostname(wifihostname);  
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.setSleep(WIFI_PS_NONE);
     short counter = 0;
     while (WiFi.status() != WL_CONNECTED) {
       delay(500);
@@ -224,6 +239,7 @@ void WifiConnect() {
         //Serial.print(F("."));
     }
     IPAddress ip = WiFi.localIP();;
+    UDPDebug("connect");
     
 }
 #endif
@@ -370,6 +386,9 @@ void ClearScreen()
   memset(doubleBuffer, 0, TOTAL_BYTES);
 #endif
 
+  #ifdef ZEDMD_udb_sender
+FlashBuffer();
+#endif
 }
 
 bool CmpColor(uint8_t* px1, uint8_t* px2, uint8_t colors)
@@ -1071,8 +1090,9 @@ bool wait_for_ctrl_chars(void)
     }
 
     // Watchdog: "reset" the communictaion if a frame timout happened.
-    if (frameTimeout && handshakeSucceeded && ((millis() - ms) > FRAME_TIMEOUT))
+    if ( (nCtrlCharFound == 0) && handshakeSucceeded && ((millis() - ms) > FRAME_TIMEOUT))
     {
+      UDPDebug("frame timeout");
       if (debugMode)
       {
         Say(5, ++debugLines[5]);
@@ -1742,12 +1762,6 @@ void loop()
 
 
 
-/*
-void UDPDebug(String message) {
-#ifdef UDPDEBUG
-  udp.beginPacket(udpAddress, udpPort);
-  udp.write((const uint8_t* ) message.c_str(), (size_t) message.length());
-  udp.endPacket();
-#endif  
-}
-*/
+
+
+
