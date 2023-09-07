@@ -2,6 +2,7 @@
 #define ZEDMD_VERSION_MINOR 3 // Max 2 Digits
 #define ZEDMD_VERSION_PATCH 0 // Max 2 Digits
 
+#ifndef PanelICN2053
 #ifdef ZEDMD_128_64_2
 #define PANEL_WIDTH 128 // Width: number of LEDs for 1 panel.
 #define PANEL_HEIGHT 64 // Height: number of LEDs.
@@ -11,6 +12,7 @@
 #define PANEL_WIDTH 64  // Width: number of LEDs for 1 panel.
 #define PANEL_HEIGHT 32 // Height: number of LEDs.
 #define PANELS_NUMBER 2 // Number of horizontally chained panels.
+#endif
 #endif
 
 #define SERIAL_BAUD 921600     // Serial baud rate.
@@ -62,16 +64,72 @@
 // 33: get panel resolution, returns (int16) width, (int16) height
 // 98: disable debug mode
 // 99: enable debug mode
-
+#ifdef PanelICN2053
 #define TOTAL_WIDTH (PANEL_WIDTH * PANELS_NUMBER)
 #define TOTAL_WIDTH_PLANE (TOTAL_WIDTH >> 3)
 #define TOTAL_HEIGHT PANEL_HEIGHT
 #define TOTAL_BYTES (TOTAL_WIDTH * TOTAL_HEIGHT * 3)
+#endif
 #define MAX_COLOR_ROTATIONS 8
 #define MIN_SPAN_ROT 60
 #define LED_CHECK_DELAY 1000 //ms per color
 
 #include <Arduino.h>
+
+#ifdef PanelICN2053  // better we define before we include the lib
+  #define MATRIX_WIDTH                128 
+  #define MATRIX_HEIGHT               64
+  #define PANEL_COUNT_WIDTH           1
+  #define PANELS_NUMBER 2
+  #define TOTAL_WIDTH (PANEL_WIDTH * PANELS_NUMBER)
+  #define TOTAL_WIDTH_PLANE (TOTAL_WIDTH >> 3)
+  #define TOTAL_HEIGHT PANEL_HEIGHT
+  #define TOTAL_BYTES (TOTAL_WIDTH * TOTAL_HEIGHT * 3)
+  #define PANEL_WIDTH_CNT 1
+  #define PANEL_HEIGHT_CNT 1
+  #define PANE_WIDTH PANEL_WIDTH*PANEL_WIDTH_CNT
+  #define PANE_HEIGHT PANEL_HEIGHT*PANEL_HEIGHT_CNT
+#endif
+
+#ifdef PanelICN2053WifiDebug
+#include <WiFi.h>
+WiFiUDP udp;
+const char * udpAddress = "192.168.0.95";
+const int udpPort = 19814;
+WiFiClient espClient;
+#define HOST_NAME "DMDTester"
+bool processingstarted=false;
+  unsigned char runloop=0;
+void WIFI_Connect()
+{
+  WiFi.disconnect();
+  WiFi.mode(WIFI_STA);
+  WiFi.hostname(HOST_NAME);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+    // Wait for connection
+  for (int i = 0; i < 25; i++)
+  {
+    if ( WiFi.status() != WL_CONNECTED ) {
+      delay ( 100 );
+    }
+    else
+    {  
+       return; }
+  }
+
+  while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+    delay(5000);
+    ESP.restart();
+  }
+
+}
+void UDBDebug(String message) {
+  udp.beginPacket(udpAddress, udpPort);
+  udp.write((const uint8_t* ) message.c_str(), (size_t) message.length());
+  udp.endPacket();
+}  
+#endif
+
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <LittleFS.h>
 #include <Bounce2.h>
@@ -90,6 +148,7 @@ AsyncUDP udp;
 IPAddress ip;
 #endif
 
+#ifndef PanelICN2053
 // Pinout derived from ESP32-HUB75-MatrixPanel-I2S-DMA.h
 #define R1_PIN 25
 #define G1_PIN 26
@@ -105,6 +164,8 @@ IPAddress ip;
 #define LAT_PIN 4
 #define OE_PIN 15
 #define CLK_PIN 16
+#endif
+
 
 #define ORDRE_BUTTON_PIN 21
 Bounce2::Button *rgbOrderButton;
@@ -130,6 +191,7 @@ bool lumtxt[16 * 5] = {0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0,
 
 unsigned char lumval[16] = {0, 2, 4, 7, 11, 18, 30, 40, 50, 65, 80, 100, 125, 160, 200, 255}; // Non-linear brightness progression
 
+#ifndef PanelICN2053
 HUB75_I2S_CFG::i2s_pins _pins = {R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
 HUB75_I2S_CFG mxconfig(
     PANEL_WIDTH,   // width
@@ -140,6 +202,38 @@ HUB75_I2S_CFG mxconfig(
 );
 
 MatrixPanel_I2S_DMA *dma_display;
+#else
+ hub75_cfg_t mxconfig = {
+    .mx_width = PANEL_WIDTH,
+    .mx_height = PANEL_HEIGHT,
+    .mx_count_width = PANEL_WIDTH_CNT,
+    .mx_count_height = PANEL_HEIGHT_CNT,
+    .gpio = {
+    .r1 = 32,
+    .g1 = 22,
+    .b1 = 33,
+    .r2 = 25,
+    .g2 = 19,
+    .b2 = 26,
+    .a = 27,
+    .b = 18,
+    .c = 14,
+    .d = 17,
+    .e = 15,
+    .lat = 16,
+    .oe = 13,
+    .clk = 12,
+    },
+    .driver = ICN2053,
+    .clk_freq = HZ_13M, 
+    .clk_phase = CLK_POZITIVE,
+    .color_depth = COLORx16,//PIXEL_COLOR_DEPTH
+    .double_buff = DOUBLE_BUFF_ON,
+    .double_dma_buff = DOUBLE_BUFF_ON,
+    .decoder_INT595 = true,
+  };
+MatrixPanel_DMA *dma_display = nullptr;
+#endif
 
 int ordreRGB[3 * 6] = {0, 1, 2, 2, 0, 1, 1, 2, 0,
                        0, 2, 1, 1, 0, 2, 2, 1, 0};
@@ -290,7 +384,7 @@ void Say(unsigned char where, unsigned int what)
 
 void ClearScreen()
 {
-  dma_display->clearScreen();
+  dma_display->clearScreen();   // for icn2053 - waits for DMA ready, slow command
   dma_display->setBrightness8(lumval[lumstep]);
 
 #ifdef ZEDMD_128_64_2
@@ -608,6 +702,10 @@ void ScaleImage(uint8_t colors)
 
 void DrawPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b)
 {
+#ifdef PanelICN2053
+  dma_display->drawPixelRGB888(x, y, r, g, b);
+#else
+
 #ifdef ZEDMD_128_64_2
   uint8_t colors = ((r >> 5) << 5) + ((g >> 5) << 2) + (b >> 6);
   uint8_t colorsExist = (r ? 8 : 0) + (g ? 4 : 0) + (b ? 2 : 0) + ((r || g || b) ? 1 : 0);
@@ -629,6 +727,7 @@ void DrawPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b)
 
     dma_display->drawPixelRGB888(x, y, r, g, b);
   }
+#endif  
 }
 
 void fillPanelRaw()
@@ -649,6 +748,10 @@ void fillPanelRaw()
           renderBuffer[pos + ordreRGB[acordreRGB * 3 + 2]]);
     }
   }
+  #ifdef PanelICN2053
+  if (dma_display->isDMABufferReady())  // if display still busy, just skip this frame
+    dma_display->flipDMABuffer();
+  #endif
 }
 
 void fillPanelUsingPalette()
@@ -669,38 +772,52 @@ void fillPanelUsingPalette()
           palette[rotCols[renderBuffer[pos]] * 3 + ordreRGB[acordreRGB * 3 + 2]]);
     }
   }
+  #ifdef PanelICN2053
+  if (dma_display->isDMABufferReady())  // if display still busy, just skip this frame
+    dma_display->flipDMABuffer();
+  #endif
 }
 
 void LoadOrdreRGB()
 {
+    #ifndef PanelICN2053
   File fordre = LittleFS.open("/ordrergb.val", "r");
   if (!fordre)
     return;
   acordreRGB = fordre.read();
   fordre.close();
+  #endif
 }
 
 void SaveOrdreRGB()
 {
+    #ifndef PanelICN2053
   File fordre = LittleFS.open("/ordrergb.val", "w");
   fordre.write(acordreRGB);
   fordre.close();
+  #endif
 }
 
 void LoadLum()
 {
+    #ifndef PanelICN2053
   File flum = LittleFS.open("/lum.val", "r");
   if (!flum)
     return;
   lumstep = flum.read();
   flum.close();
+  #else
+  lumstep=14;
+  #endif
 }
 
 void SaveLum()
 {
+    #ifndef PanelICN2053
   File flum = LittleFS.open("/lum.val", "w");
   flum.write(lumstep);
   flum.close();
+  #endif
 }
 
 void ledTester(void)
@@ -725,6 +842,7 @@ void ledTester(void)
 void DisplayLogo(void)
 {
   ClearScreen();
+   #ifndef PanelICN2053
   LoadOrdreRGB();
 
   File flogo;
@@ -740,7 +858,7 @@ void DisplayLogo(void)
 
   if (!flogo)
   {
-    // Serial.println("Failed to open file for reading");
+    Serial.println("Failed to open file for reading");
     return;
   }
 
@@ -752,12 +870,38 @@ void DisplayLogo(void)
   flogo.close();
 
   fillPanelRaw();
-
   free(renderBuffer);
 
   DisplayVersion();
   DisplayText(lumtxt, 16, TOTAL_WIDTH / 2 - 16 / 2 - 2 * 4 / 2, TOTAL_HEIGHT - 5, 255, 255, 255);
   DisplayLum();
+#else
+    dma_display->setColor(255, 0 , 0);
+    dma_display->drawFastHLine(0, 0, 128);
+    dma_display->drawFastHLine(1, 1, 127);
+    dma_display->drawFastHLine(1, 62, 127);
+    dma_display->drawFastHLine(0, 63, 128);
+    dma_display->drawFastVLine(0, 0, 64);
+    dma_display->drawFastVLine(1, 0, 64);
+
+    dma_display->setColor(0, 255 , 0);
+    dma_display->drawFastHLine(2, 2, 126);
+    dma_display->drawFastHLine(3, 3, 125);    
+    dma_display->drawFastHLine(2, 61, 126);
+    dma_display->drawFastHLine(3, 60, 125);
+    dma_display->drawFastVLine(2, 2, 59);    
+    dma_display->drawFastVLine(3, 3, 59); 
+
+    dma_display->setColor(0, 0 , 255);
+    dma_display->drawFastHLine(4, 4, 124);
+    dma_display->drawFastHLine(5, 5, 123);
+    dma_display->drawFastHLine(4, 59, 124);
+    dma_display->drawFastHLine(5, 58, 123);
+    dma_display->drawFastVLine(4, 4, 55);  
+    dma_display->drawFastVLine(5, 5, 55); 
+  dma_display->flipDMABuffer();
+  delay(2000);
+#endif
 #ifdef ZEDMD_WIFI
   if (ip = WiFi.localIP()) {
     for (int i = 0; i < 4; i++) {
@@ -766,6 +910,9 @@ void DisplayLogo(void)
   }
 #endif
 
+#ifdef PanelICN2053
+ // dma_display->flipDMABuffer();
+#endif
   displayStatus = 1;
   MireActive = true;
   // Re-use this variable to save memory
@@ -774,8 +921,8 @@ void DisplayLogo(void)
 
 void DisplayUpdate(void)
 {
+  #ifndef PanelICN2053
   ClearScreen();
-
   File flogo;
 
   if (TOTAL_HEIGHT == 64)
@@ -802,7 +949,19 @@ void DisplayUpdate(void)
   fillPanelRaw();
 
   free(renderBuffer);
+#else 
+dma_display->clearScreen();
+    dma_display->setColor(255, 0 , 0);
+    dma_display->drawFastHLine(0, 0, 128);
+    dma_display->drawFastHLine(1, 1, 127);
+    dma_display->drawFastHLine(1, 62, 127);
+    dma_display->drawFastHLine(0, 63, 128);
+    dma_display->drawFastVLine(0, 0, 64);
+    dma_display->drawFastVLine(1, 0, 64);
 
+  dma_display->flipDMABuffer();
+
+#endif
   displayStatus = 2;
   // Re-use this variable to save memory
   nextTime[0] = millis() - (LOGO_TIMEOUT / 2);
@@ -813,6 +972,10 @@ void ScreenSaver(void)
   ClearScreen();
   dma_display->setBrightness8(lumval[1]);
   DisplayVersion();
+
+#ifdef PanelICN2053
+  dma_display->flipDMABuffer();
+#endif
 
   displayStatus = 0;
 }
@@ -850,25 +1013,41 @@ void setup()
   brightnessButton->interval(100);
   brightnessButton->setPressedState(LOW);
 
+#ifndef PanelICN2053
   mxconfig.clkphase = false; // change if you have some parts of the panel with a shift
   dma_display = new MatrixPanel_I2S_DMA(mxconfig);
+#else
+  dma_display = new MatrixPanel_DMA(mxconfig);
+#endif
+
   dma_display->begin();
 
+  #ifdef PanelICN2053
+    dma_display->setBrightness8(192);
+  #endif
+
+  #ifndef PanelICN2053
   if (!LittleFS.begin())
   {
     Say(0, 9999);
     delay(4000);
   }
+  #endif
 
   Serial.setRxBufferSize(SERIAL_BUFFER);
   Serial.setTimeout(SERIAL_TIMEOUT);
   Serial.begin(SERIAL_BAUD);
   while (!Serial)
-    ;
+    ; 
 
   LoadLum();
+
   ClearScreen();
   DisplayLogo();
+
+#ifdef PanelICN2053WifiDebug
+ WIFI_Connect();
+#endif
 
 #ifdef ZEDMD_WIFI
   WiFi.disconnect(true);
@@ -1103,8 +1282,24 @@ bool wait_for_ctrl_chars(void)
       if (Serial.read() != CtrlCharacters[nCtrlCharFound++])
       {
         nCtrlCharFound = 0;
+            #ifdef PanelICN2053WifiDebug 
+                UDBDebug("bad");
+                //runloop=0;
+            #endif
       }
+     #ifdef PanelICN2053WifiDebug 
+     else
+        UDBDebug("nCtrlCharFound: "+String(nCtrlCharFound));
+    #endif     
     }
+
+    #ifdef PanelICN2053WifiDebug 
+    if(processingstarted) {
+      runloop++;
+      if ((runloop%500)==0)       
+        UDBDebug("loop: "+String(nCtrlCharFound)+" loop: "+String(runloop));
+    } 
+    #endif
 
     if (displayStatus == 1 && mode64 && nCtrlCharFound == 0)
     {
@@ -1120,6 +1315,9 @@ bool wait_for_ctrl_chars(void)
     {
       Serial.write(flowControlCounter);
       ms = millis();
+      #ifdef PanelICN2053WifiDebug  
+    UDBDebug("Timeout");
+#endif
     }
   }
 
@@ -1128,6 +1326,9 @@ bool wait_for_ctrl_chars(void)
     if (flowControlCounter < 32)
     {
       flowControlCounter++;
+            #ifdef PanelICN2053WifiDebug  
+    UDBDebug("flowControlCounter "+String(flowControlCounter));
+#endif
     }
     else
     {
@@ -1140,6 +1341,13 @@ bool wait_for_ctrl_chars(void)
 
 void loop()
 {
+#ifdef PanelICN2053WifiDebug  
+    if (WiFi.status() != WL_CONNECTED)
+    {
+      WIFI_Connect();
+    }
+#endif
+
   while (MireActive)
   {
     rgbOrderButton->update();
@@ -1181,7 +1389,9 @@ void loop()
 
     if (Serial.available() > 0)
     {
+#ifndef PanelICN2053    // ClearScreen waits for DMA ready, we draw something else anyway
       ClearScreen();
+#endif      
       MireActive = false;
     }
     else if ((millis() - nextTime[0]) > LOGO_TIMEOUT)
@@ -1218,7 +1428,10 @@ void loop()
     unsigned char c4;
     while (Serial.available() == 0);
     c4 = Serial.read();
-
+#ifdef PanelICN2053WifiDebug  
+    UDBDebug("Received:"+String(c4));
+    if (c4 == 9) processingstarted=true;
+#endif
     if (debugMode)
     {
       DisplayNombre(c4, 2, TOTAL_WIDTH - 3 * 4, TOTAL_HEIGHT - 8, 200, 200, 200);
